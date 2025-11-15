@@ -1,0 +1,7 @@
+{
+  "name": "AI Transcription and Translation",
+  "description": "A real-time speech-to-text application using the Gemini API. It displays both interim (real-time) and final (confirmed) transcription results for a selected language.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
