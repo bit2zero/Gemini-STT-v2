@@ -18,26 +18,6 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      },
-      test: {
-        globals: true,
-        environment: 'happy-dom',
-        setupFiles: './test/setup.ts',
-        css: true,
-        define: {
-          'process.env.API_KEY': JSON.stringify('test-api-key'),
-          'process.env.GEMINI_API_KEY': JSON.stringify('test-api-key')
-        },
-        coverage: {
-          provider: 'v8',
-          reporter: ['text', 'json', 'html'],
-          exclude: [
-            'node_modules/',
-            'test/',
-            '*.config.ts',
-            '*.config.js',
-          ]
-        }
       }
     };
 });

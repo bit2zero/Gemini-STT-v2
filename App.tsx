@@ -1,18 +1,15 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from '@google/genai';
-import {
-  TRANSCRIPTION_LANGUAGES,
-  OPTIONAL_LANGUAGES,
-  getLangStyleByName,
-  encode,
-  type LanguageOption,
-} from './utils/helpers';
 
 // --- Type Definitions ---
 interface LiveSession {
   sendRealtimeInput(input: { media: Blob }): void;
   close(): void;
+}
+interface LanguageOption {
+  code: string;
+  name: string;
 }
 interface TranscriptSegment {
   originalText: string;
@@ -20,6 +17,36 @@ interface TranscriptSegment {
   translatedText: string | null;
   targetLang: string | null;
 }
+
+// --- Constants ---
+const TRANSCRIPTION_LANGUAGES: LanguageOption[] = [
+  { code: 'ja-JP', name: '日本語' },
+  { code: 'en-US', name: 'English' },
+  { code: 'zh-CN', name: '中文' },
+  { code: 'vi-VN', name: 'Tiếng Việt' },
+  { code: 'ko-KR', name: '한국어' },
+  { code: 'pt-BR', name: 'Português' },
+];
+const OPTIONAL_LANGUAGES: LanguageOption[] = [
+    { code: 'none', name: 'None' },
+    ...TRANSCRIPTION_LANGUAGES
+];
+
+const LANGUAGE_STYLES: Record<string, string> = {
+  '日本語': 'bg-red-900/50 text-red-300 border border-red-500/30',
+  'English': 'bg-blue-900/50 text-blue-300 border border-blue-500/30',
+  '中文': 'bg-yellow-900/50 text-yellow-300 border border-yellow-500/30',
+  'Tiếng Việt': 'bg-green-900/50 text-green-300 border border-green-500/30',
+  '한국어': 'bg-purple-900/50 text-purple-300 border border-purple-500/30',
+  'Português': 'bg-orange-900/50 text-orange-300 border border-orange-500/30',
+};
+const DEFAULT_STYLE = 'bg-cyan-900/50 text-cyan-300 border border-cyan-500/30';
+
+const getLangStyleByName = (langName: string): string => {
+    const foundKey = Object.keys(LANGUAGE_STYLES).find(key => langName.includes(key));
+    return foundKey ? LANGUAGE_STYLES[foundKey] : DEFAULT_STYLE;
+};
+
 
 // --- SVG Icons ---
 const MicIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -34,6 +61,15 @@ const StopIcon: React.FC<{ className?: string }> = ({ className }) => (
     <path d="M7 7h10v10H7V7Z" />
   </svg>
 );
+
+const encode = (bytes: Uint8Array): string => {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
 
 // --- Child Components ---
 
@@ -75,12 +111,33 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showApiLog, setShowApiLog] = useState(false);
   const [apiResponses, setApiResponses] = useState<string[]>([]);
+  const [apiStatus, setApiStatus] = useState<string>('Ready to record');
 
   const sessionRef = useRef<LiveSession | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const currentTranscriptRef = useRef<string>('');
+
+  const stopRecording = useCallback(() => {
+    if (sessionRef.current) {
+      sessionRef.current.close();
+      sessionRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (scriptProcessorRef.current) {
+      scriptProcessorRef.current.disconnect();
+      scriptProcessorRef.current = null;
+    }
+    if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+      inputAudioContextRef.current.close();
+    }
+    
+    setIsRecording(false);
+  }, []);
 
   const handleError = useCallback((err: unknown) => {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -91,6 +148,7 @@ export default function App() {
       } else {
           setError(errorMessage);
       }
+      setApiStatus('An error occurred.');
   }, []);
 
   useEffect(() => {
@@ -105,8 +163,7 @@ export default function App() {
     return () => {
       stopRecording();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [stopRecording]);
 
    const handleSelectKey = async () => {
         if (window.aistudio) {
@@ -151,11 +208,9 @@ export default function App() {
         setError("Please select an API Key before starting.");
         return;
     }
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-    setIsRecording(true);
-
+    
     try {
+      setApiStatus('Initializing microphone...');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
@@ -163,6 +218,10 @@ export default function App() {
       inputAudioContextRef.current = inputAudioContext;
       
       const systemInstruction = getSystemInstruction();
+      
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      setIsRecording(true);
+      setApiStatus('Connecting to service...');
 
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -170,6 +229,7 @@ export default function App() {
             onopen: () => {
                 console.log('Session opened.');
                 setApiResponses(prev => [...prev, '{"status": "Session Opened"}']);
+                setApiStatus('Listening...');
             },
             onmessage: async (message: LiveServerMessage) => {
                 setApiResponses(prev => [...prev, JSON.stringify(message, null, 2)]);
@@ -181,6 +241,7 @@ export default function App() {
                 if (message.serverContent?.turnComplete) {
                   const fullText = currentTranscriptRef.current.trim();
                   if (fullText) {
+                      setApiStatus('Processing speech...');
                       const match = fullText.match(/^\[([^\]]+)\]\s*(.*)$/s);
                       
                       let originalLang = 'Unknown';
@@ -199,6 +260,7 @@ export default function App() {
                           if (targetLangOption && targetLangOption.code !== 'none') {
                               try {
                                   targetLangName = targetLangOption.name;
+                                  setApiStatus(`Translating to ${targetLangName}...`);
                                   translatedText = await translateText(originalText, targetLangName);
                               } catch (translationError) {
                                   console.error("Translation failed:", translationError);
@@ -218,19 +280,24 @@ export default function App() {
                       }
                   }
                   currentTranscriptRef.current = '';
+                  if (sessionRef.current) {
+                      setApiStatus('Listening...');
+                  }
                 }
             },
             onerror: (e: ErrorEvent) => {
                 console.error('Session error:', e);
-                setError('An error occurred during the session. Please try again.');
-                handleError(new Error(e.message));
                 setApiResponses(prev => [...prev, JSON.stringify({error: e.message}, null, 2)]);
+                handleError(new Error('An error occurred during the session. Please try again. ' + e.message));
                 stopRecording();
             },
             onclose: (e: CloseEvent) => {
                 console.log('Session closed.');
                 setApiResponses(prev => [...prev, '{"status": "Session Closed"}']);
-                setIsRecording(false);
+                if (isRecording) {
+                    setApiStatus('Session ended.');
+                    setIsRecording(false);
+                }
             },
         },
         config: {
@@ -265,37 +332,24 @@ export default function App() {
         scriptProcessor.connect(inputAudioContext.destination);
       }).catch(err => {
          console.error('Failed to connect to session:', err);
-         setError('Could not start the transcription session.');
          handleError(err);
          setIsRecording(false);
+         setApiStatus('Connection failed.');
       });
 
     } catch (err) {
       console.error('Microphone access denied:', err);
       setError('Microphone access is required. Please allow microphone permissions in your browser.');
       setIsRecording(false);
+      setApiStatus('Microphone access denied.');
     }
   };
 
-  const stopRecording = useCallback(() => {
-    if (sessionRef.current) {
-      sessionRef.current.close();
-      sessionRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect();
-      scriptProcessorRef.current = null;
-    }
-    if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
-      inputAudioContextRef.current.close();
-    }
-    
-    setIsRecording(false);
-  }, []);
+  const handleStopRecording = () => {
+    setApiStatus('Stopping session...');
+    stopRecording();
+    setApiStatus('Ready to record');
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-slate-800 p-4 sm:p-6 md:p-8 font-sans">
@@ -327,11 +381,21 @@ export default function App() {
                     <span>Start Recording</span>
                 </button>
                 ) : (
-                <button onClick={stopRecording} className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-full shadow-lg transform hover:scale-105 transition-all duration-300 ease-in-out animate-pulse">
+                <button onClick={handleStopRecording} className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-full shadow-lg transform hover:scale-105 transition-all duration-300 ease-in-out animate-pulse">
                     <StopIcon className="h-6 w-6" />
                     <span>Stop Recording</span>
                 </button>
                 )}
+            </div>
+
+            {/* Status Indicator */}
+            <div className="text-center text-sm text-gray-400 my-2 h-6 flex items-center justify-center gap-2">
+                {(apiStatus.includes('...') && isRecording) ? (
+                    <div className="w-4 h-4 border-2 border-dashed rounded-full animate-spin border-cyan-400"></div>
+                ) : apiStatus === 'Listening...' ? (
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                ) : null}
+                <span className="font-semibold text-cyan-300">{apiStatus}</span>
             </div>
 
             {error && <div className="bg-red-500/30 border border-red-500 text-red-300 p-3 rounded-md text-center">{error}</div>}
