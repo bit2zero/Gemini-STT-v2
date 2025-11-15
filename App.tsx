@@ -71,40 +71,9 @@ const encode = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 
-// --- Child Components ---
-
-const ApiKeySelectionOverlay: React.FC<{ onSelectKey: () => void }> = ({ onSelectKey }) => (
-    <div className="fixed inset-0 bg-gray-900 bg-opacity-95 z-50 flex items-center justify-center p-4">
-        <div className="bg-slate-800 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-cyan-500/20">
-            <h2 className="text-2xl font-bold text-cyan-400 mb-4">API Key Required</h2>
-            <p className="text-gray-300 mb-6">
-                To use this application, you need to select a Google AI API key.
-            </p>
-            <button
-                onClick={onSelectKey}
-                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-cyan-600 hover:bg-cyan-700 text-white font-bold rounded-full shadow-lg transform hover:scale-105 transition-all duration-300 ease-in-out"
-            >
-                Select API Key
-            </button>
-            <p className="text-xs text-gray-500 mt-4">
-                For more information on billing, please visit the{' '}
-                <a
-                    href="https://ai.google.dev/gemini-api/docs/billing"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-cyan-500 hover:underline"
-                >
-                    official documentation
-                </a>.
-            </p>
-        </div>
-    </div>
-);
-
 // --- Main App Component ---
 
 export default function App() {
-  const [isKeySelected, setIsKeySelected] = useState(false);
   const [translationLang, setTranslationLang] = useState<string>('none');
   const [isRecording, setIsRecording] = useState(false);
   const [finalTranscripts, setFinalTranscripts] = useState<TranscriptSegment[]>([]);
@@ -143,8 +112,7 @@ export default function App() {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       console.error(err);
       if (errorMessage.includes('Requested entity was not found.')) {
-          setError('API Key is invalid. Please select a valid key.');
-          setIsKeySelected(false);
+          setError('API Key is invalid or missing.');
       } else {
           setError(errorMessage);
       }
@@ -152,32 +120,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const checkKey = async () => {
-        if (window.aistudio) {
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            setIsKeySelected(hasKey);
-        }
-    };
-    checkKey();
-    
     return () => {
       stopRecording();
     };
   }, [stopRecording]);
-
-   const handleSelectKey = async () => {
-        if (window.aistudio) {
-            await window.aistudio.openSelectKey();
-            setIsKeySelected(true);
-        }
-    };
     
     const getSystemInstruction = () => {
         return `Transcribe the user's speech. You MUST prefix the output with the detected language name in brackets. For example: '[English] Hello world' or '[日本語] こんにちは'. Do not add any other text, conversation, or greetings. Only provide the formatted transcription.`;
     }
 
     const translateText = useCallback(async (text: string, targetLangName: string): Promise<string> => {
-        if (!isKeySelected || !process.env.API_KEY) {
+        if (!process.env.API_KEY) {
             throw new Error("API Key not available for translation.");
         }
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -195,7 +148,7 @@ export default function App() {
             handleError(err);
             throw err;
         }
-    }, [isKeySelected, handleError]);
+    }, [handleError]);
 
   const handleStartRecording = async () => {
     if (isRecording) return;
@@ -204,8 +157,8 @@ export default function App() {
     setApiResponses([]);
     currentTranscriptRef.current = '';
 
-    if (!isKeySelected || !process.env.API_KEY) {
-        setError("Please select an API Key before starting.");
+    if (!process.env.API_KEY) {
+        setError("API Key is not configured. Please ensure it's set up correctly.");
         return;
     }
     
@@ -353,8 +306,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-slate-800 p-4 sm:p-6 md:p-8 font-sans">
-        {!isKeySelected && <ApiKeySelectionOverlay onSelectKey={handleSelectKey} />}
-        <div className={`max-w-4xl mx-auto ${!isKeySelected ? 'blur-sm pointer-events-none' : ''}`}>
+        <div className="max-w-4xl mx-auto">
             <header className="text-center mb-8">
             <h1 className="text-4xl sm:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
                 Real-time Speech-to-Text
